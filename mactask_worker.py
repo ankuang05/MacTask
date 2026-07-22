@@ -188,6 +188,7 @@ class Worker:
         self.recorder = Recorder()
         self.record_key = "p"
         self.stop_key = "l"
+        self.stop_play_key = "esc"
         self._binding = None
         self.playing = False
         self._stop_play = threading.Event()
@@ -214,11 +215,16 @@ class Worker:
             label = key_label(key)
             if self._binding == "record":
                 self.record_key = label
-            else:
+            elif self._binding == "stop":
                 self.stop_key = label
+            elif self._binding == "stopplay":
+                self.stop_play_key = label
             self._binding = None
             return
         if self.playing:
+            # The only hotkey that works mid-playback is "stop playback".
+            if key_label(key) == self.stop_play_key:
+                self._stop_play.set()
             return
         label = key_label(key)
         if self.recorder.active:
@@ -291,6 +297,7 @@ class Worker:
             "count": len(self.recorder.events),
             "record_key": self.record_key,
             "stop_key": self.stop_key,
+            "stop_play_key": self.stop_play_key,
             "binding": self._binding,
         }
 

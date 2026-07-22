@@ -81,6 +81,13 @@ def _label(text, x, y, w, h, size=13, weight="regular", color=None,
     return lbl
 
 
+def _tint(btn, color):
+    try:
+        btn.setBezelColor_(color)
+    except Exception:
+        pass
+
+
 def _button(title, x, y, w, h, target, action, tint=None):
     b = NSButton.alloc().initWithFrame_(NSMakeRect(x, y, w, h))
     b.setTitle_(title)
@@ -89,10 +96,7 @@ def _button(title, x, y, w, h, target, action, tint=None):
     b.setAction_(action)
     b.setFont_(NSFont.systemFontOfSize_(13))
     if tint is not None:
-        try:
-            b.setBezelColor_(tint)
-        except Exception:
-            pass
+        _tint(b, tint)
     return b
 
 
@@ -108,7 +112,8 @@ class Controller(NSObject):
             return None
         self.state = {
             "trusted": False, "recording": False, "playing": False,
-            "count": 0, "record_key": "p", "stop_key": "l", "binding": None,
+            "count": 0, "record_key": "p", "stop_key": "l",
+            "stop_play_key": "esc", "binding": None,
         }
         self._binding_ui = None
         self._build_window()
@@ -119,7 +124,7 @@ class Controller(NSObject):
 
     # -------------------------------------------------- window --------------
     def _build_window(self):
-        W, H = 360, 480
+        W, H = 360, 520
         style = (NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
                  | NSWindowStyleMaskMiniaturizable)
         win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
@@ -197,6 +202,12 @@ class Controller(NSObject):
                                     self, b"bindStop:")
         cv.addSubview_(self.stop_key_btn)
 
+        cv.addSubview_(_label("Stop playback", 24, H - 440, 110, 22,
+                              color=subtle))
+        self.stopplay_key_btn = _button("ESC", 140, H - 442, 90, 26,
+                                        self, b"bindStopPlay:")
+        cv.addSubview_(self.stopplay_key_btn)
+
         cv.addSubview_(_label("In-memory only — nothing is saved to disk.",
                               24, 18, W - 48, 16, size=11, color=faint,
                               center=True))
@@ -234,8 +245,11 @@ class Controller(NSObject):
         self._send(cmd="toggle_record")
 
     def playClicked_(self, sender):
-        self._send(cmd="play", speed=self.speed.floatValue(),
-                   loop=self.loop_btn.state() == NSControlStateValueOn)
+        if self.state.get("playing"):
+            self._send(cmd="stop_play")
+        else:
+            self._send(cmd="play", speed=self.speed.floatValue(),
+                       loop=self.loop_btn.state() == NSControlStateValueOn)
 
     def clearClicked_(self, sender):
         self._send(cmd="clear")
@@ -252,6 +266,11 @@ class Controller(NSObject):
         self._binding_ui = "stop"
         self.stop_key_btn.setTitle_("press…")
         self._send(cmd="bind", which="stop")
+
+    def bindStopPlay_(self, sender):
+        self._binding_ui = "stopplay"
+        self.stopplay_key_btn.setTitle_("press…")
+        self._send(cmd="bind", which="stopplay")
 
     def grantClicked_(self, sender):
         if HAVE_AX_PROMPT:
@@ -294,9 +313,18 @@ class Controller(NSObject):
             self.status_lbl.setTextColor_(NSColor.labelColor())
             self.record_btn.setTitle_("● Record")
 
+        # Play button doubles as a Stop button while playing.
+        if playing:
+            self.play_btn.setTitle_("■ Stop")
+            _tint(self.play_btn,NSColor.systemRedColor())
+        else:
+            self.play_btn.setTitle_("▶ Play")
+            _tint(self.play_btn,NSColor.systemGreenColor())
+
         self.count_lbl.setStringValue_(f"{s.get('count', 0)} events")
 
-        self.play_btn.setEnabled_(trusted and not (playing or recording))
+        # Play/Stop is usable during playback so you can stop a loop.
+        self.play_btn.setEnabled_(trusted and not recording)
         self.record_btn.setEnabled_(trusted and not playing)
         self.clear_btn.setEnabled_(trusted and not (playing or recording))
 
@@ -306,6 +334,8 @@ class Controller(NSObject):
             self.rec_key_btn.setTitle_(s.get("record_key", "p").upper())
         if self._binding_ui != "stop":
             self.stop_key_btn.setTitle_(s.get("stop_key", "l").upper())
+        if self._binding_ui != "stopplay":
+            self.stopplay_key_btn.setTitle_(s.get("stop_play_key", "esc").upper())
 
     # -------------------------------------------------- shutdown ------------
     def windowWillClose_(self, notification):
