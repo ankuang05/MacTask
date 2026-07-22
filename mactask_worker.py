@@ -188,7 +188,7 @@ class Worker:
         self.recorder = Recorder()
         self.record_key = "p"
         self.stop_key = "l"
-        self.stop_play_key = "esc"
+        self.stop_play_key = "k"
         self._binding = None
         self.playing = False
         self._stop_play = threading.Event()

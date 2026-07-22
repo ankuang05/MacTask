@@ -113,7 +113,7 @@ class Controller(NSObject):
         self.state = {
             "trusted": False, "recording": False, "playing": False,
             "count": 0, "record_key": "p", "stop_key": "l",
-            "stop_play_key": "esc", "binding": None,
+            "stop_play_key": "k", "binding": None,
         }
         self._binding_ui = None
         self._build_window()
@@ -204,7 +204,7 @@ class Controller(NSObject):
 
         cv.addSubview_(_label("Stop playback", 24, H - 440, 110, 22,
                               color=subtle))
-        self.stopplay_key_btn = _button("ESC", 140, H - 442, 90, 26,
+        self.stopplay_key_btn = _button("K", 140, H - 442, 90, 26,
                                         self, b"bindStopPlay:")
         cv.addSubview_(self.stopplay_key_btn)
 
@@ -335,7 +335,7 @@ class Controller(NSObject):
         if self._binding_ui != "stop":
             self.stop_key_btn.setTitle_(s.get("stop_key", "l").upper())
         if self._binding_ui != "stopplay":
-            self.stopplay_key_btn.setTitle_(s.get("stop_play_key", "esc").upper())
+            self.stopplay_key_btn.setTitle_(s.get("stop_play_key", "k").upper())
 
     # -------------------------------------------------- shutdown ------------
     def windowWillClose_(self, notification):
