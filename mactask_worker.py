@@ -168,17 +168,17 @@ class Player:
     def _resolve_key(self, e):
         if e.get("special"):
             return getattr(keyboard.Key, e["key"], None)
-        # Prefer the character; fall back to the physical key (vk) when macOS
-        # gave us no char for this key (e.g. number keys on some layouts).
-        if e.get("key") is not None:
-            return e["key"]
+        # Prefer the physical key code (vk). Games like Roblox read the hardware
+        # key code, not the character a synthetic event carries, so pressing by
+        # vk makes the key actually register in games. Fall back to the char
+        # only when no vk was captured (older/synthetic events).
         vk = e.get("vk")
         if vk is not None:
             try:
                 return keyboard.KeyCode.from_vk(vk)
             except Exception:
-                return None
-        return None
+                pass
+        return e.get("key")
 
     def _pos_at(self, t):
         mt = self.move_t
