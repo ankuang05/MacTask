@@ -90,6 +90,18 @@ def _tint(btn, color):
         pass
 
 
+def _badge(text, x, y, w, h):
+    f = NSTextField.alloc().initWithFrame_(NSMakeRect(x, y, w, h))
+    f.setStringValue_(text)
+    f.setEditable_(False)
+    f.setSelectable_(False)
+    f.setBezeled_(True)
+    f.setDrawsBackground_(True)
+    f.setAlignment_(NSTextAlignmentCenter)
+    f.setFont_(NSFont.boldSystemFontOfSize_(13))
+    return f
+
+
 def _button(title, x, y, w, h, target, action, tint=None):
     b = NSButton.alloc().initWithFrame_(NSMakeRect(x, y, w, h))
     b.setTitle_(title)
@@ -126,7 +138,7 @@ class Controller(NSObject):
 
     # -------------------------------------------------- window --------------
     def _build_window(self):
-        W, H = 360, 520
+        W, H = 360, 600
         style = (NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
                  | NSWindowStyleMaskMiniaturizable)
         win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
@@ -141,52 +153,52 @@ class Controller(NSObject):
         faint = NSColor.tertiaryLabelColor()
 
         # --- Status block ---
-        self.status_lbl = _label("Ready", 24, H - 62, W - 48, 30,
+        self.status_lbl = _label("Ready", 24, H - 56, W - 48, 30,
                                  size=24, weight="bold", center=True)
         cv.addSubview_(self.status_lbl)
-        self.count_lbl = _label("0 events", 24, H - 84, W - 48, 16,
+        self.count_lbl = _label("0 events", 24, H - 80, W - 48, 16,
                                 size=12, color=subtle, center=True)
         cv.addSubview_(self.count_lbl)
 
         # --- Permission banner ---
-        self.perm_lbl = _label("", 24, H - 110, W - 48, 16, size=12,
+        self.perm_lbl = _label("", 24, H - 106, W - 48, 16, size=12,
                                center=True)
         cv.addSubview_(self.perm_lbl)
-        self.grant_btn = _button("Grant Accessibility Access", 60, H - 144,
-                                 240, 30, self, b"grantClicked:")
+        self.grant_btn = _button("Grant Access", 60, H - 140, 240, 30,
+                                 self, b"grantClicked:")
         cv.addSubview_(self.grant_btn)
 
         # --- Primary controls ---
-        self.record_btn = _button("● Record", 24, H - 196, 150, 40,
+        self.record_btn = _button("● Record", 24, H - 192, 150, 40,
                                   self, b"recordClicked:",
                                   tint=NSColor.systemRedColor())
         cv.addSubview_(self.record_btn)
-        self.play_btn = _button("▶ Play", 186, H - 196, 150, 40,
+        self.play_btn = _button("▶ Play", 186, H - 192, 150, 40,
                                 self, b"playClicked:",
                                 tint=NSColor.systemGreenColor())
         cv.addSubview_(self.play_btn)
 
-        self.clear_btn = _button("Clear recording", 24, H - 240, W - 48, 30,
+        self.clear_btn = _button("Clear recording", 24, H - 236, W - 48, 30,
                                  self, b"clearClicked:")
         cv.addSubview_(self.clear_btn)
 
         # --- Playback settings ---
-        cv.addSubview_(_label("PLAYBACK", 24, H - 282, W - 48, 14,
+        cv.addSubview_(_label("PLAYBACK", 24, H - 278, W - 48, 14,
                               size=11, weight="semibold", color=faint))
-        cv.addSubview_(_label("Speed", 24, H - 308, 46, 20, color=subtle))
+        cv.addSubview_(_label("Speed", 24, H - 304, 46, 20, color=subtle))
         self.speed = NSSlider.alloc().initWithFrame_(
-            NSMakeRect(72, H - 310, 200, 22))
+            NSMakeRect(72, H - 306, 200, 22))
         self.speed.setMinValue_(0.25)
         self.speed.setMaxValue_(4.0)
         self.speed.setFloatValue_(1.0)
         self.speed.setTarget_(self)
         self.speed.setAction_(b"speedChanged:")
         cv.addSubview_(self.speed)
-        self.speed_lbl = _label("1.00×", 280, H - 308, 56, 20, color=subtle)
+        self.speed_lbl = _label("1.00×", 280, H - 304, 56, 20, color=subtle)
         cv.addSubview_(self.speed_lbl)
 
         self.loop_btn = NSButton.alloc().initWithFrame_(
-            NSMakeRect(22, H - 338, 200, 22))
+            NSMakeRect(22, H - 334, 220, 22))
         self.loop_btn.setButtonType_(3)  # checkbox
         self.loop_btn.setTitle_(" Loop until stopped")
         self.loop_btn.setFont_(NSFont.systemFontOfSize_(13))
@@ -195,26 +207,29 @@ class Controller(NSObject):
         cv.addSubview_(self.loop_btn)
 
         # --- Hotkeys ---
-        cv.addSubview_(_label("HOTKEYS", 24, H - 380, W - 48, 14,
+        cv.addSubview_(_label("HOTKEYS", 24, H - 376, W - 48, 14,
                               size=11, weight="semibold", color=faint))
-        # Row 1: Record | Stop rec
-        cv.addSubview_(_label("Record", 24, H - 406, 60, 22, color=subtle))
-        self.rec_key_btn = _button("P", 96, H - 408, 74, 26,
-                                   self, b"bindRecord:")
-        cv.addSubview_(self.rec_key_btn)
-        cv.addSubview_(_label("Stop rec", 190, H - 406, 66, 22, color=subtle))
-        self.stop_key_btn = _button("L", 262, H - 408, 74, 26,
-                                    self, b"bindStop:")
-        cv.addSubview_(self.stop_key_btn)
-        # Row 2: Play | Stop play
-        cv.addSubview_(_label("Play", 24, H - 438, 60, 22, color=subtle))
-        self.play_key_btn = _button("O", 96, H - 440, 74, 26,
-                                    self, b"bindPlay:")
-        cv.addSubview_(self.play_key_btn)
-        cv.addSubview_(_label("Stop play", 190, H - 438, 70, 22, color=subtle))
-        self.stopplay_key_btn = _button("K", 262, H - 440, 74, 26,
-                                        self, b"bindStopPlay:")
-        cv.addSubview_(self.stopplay_key_btn)
+        cv.addSubview_(_label("Click Change, then press the new key.",
+                              24, H - 396, W - 48, 14, size=11, color=faint))
+
+        rows = [
+            ("Record",    "record_key",    "p", b"bindRecord:",   "record"),
+            ("Stop rec",  "stop_key",      "l", b"bindStop:",     "stop"),
+            ("Play",      "play_key",      "o", b"bindPlay:",     "play"),
+            ("Stop play", "stop_play_key", "k", b"bindStopPlay:", "stopplay"),
+        ]
+        self.key_badges = {}      # tag -> (badge, state_key, default)
+        self.change_btns = []
+        y0 = H - 424
+        for i, (name, skey, default, action, tag) in enumerate(rows):
+            y = y0 - i * 34
+            cv.addSubview_(_label(name, 24, y, 86, 24, color=subtle))
+            badge = _badge(default.upper(), 116, y, 60, 24)
+            cv.addSubview_(badge)
+            self.key_badges[tag] = (badge, skey, default)
+            btn = _button("Change", 186, y - 1, 150, 26, self, action)
+            cv.addSubview_(btn)
+            self.change_btns.append(btn)
 
         cv.addSubview_(_label("In-memory only — nothing is saved to disk.",
                               24, 18, W - 48, 16, size=11, color=faint,
@@ -275,25 +290,23 @@ class Controller(NSObject):
         self._send(cmd="config", speed=self.speed.floatValue(),
                    loop=self.loop_btn.state() == NSControlStateValueOn)
 
+    def _begin_bind(self, tag):
+        self._binding_ui = tag
+        badge = self.key_badges[tag][0]
+        badge.setStringValue_("press…")
+        self._send(cmd="bind", which=tag)
+
     def bindRecord_(self, sender):
-        self._binding_ui = "record"
-        self.rec_key_btn.setTitle_("press…")
-        self._send(cmd="bind", which="record")
+        self._begin_bind("record")
 
     def bindStop_(self, sender):
-        self._binding_ui = "stop"
-        self.stop_key_btn.setTitle_("press…")
-        self._send(cmd="bind", which="stop")
+        self._begin_bind("stop")
 
     def bindPlay_(self, sender):
-        self._binding_ui = "play"
-        self.play_key_btn.setTitle_("press…")
-        self._send(cmd="bind", which="play")
+        self._begin_bind("play")
 
     def bindStopPlay_(self, sender):
-        self._binding_ui = "stopplay"
-        self.stopplay_key_btn.setTitle_("press…")
-        self._send(cmd="bind", which="stopplay")
+        self._begin_bind("stopplay")
 
     def grantClicked_(self, sender):
         need_ax = not self.state.get("trusted", False)
@@ -366,14 +379,12 @@ class Controller(NSObject):
 
         if s.get("binding") is None:
             self._binding_ui = None
-        if self._binding_ui != "record":
-            self.rec_key_btn.setTitle_(s.get("record_key", "p").upper())
-        if self._binding_ui != "stop":
-            self.stop_key_btn.setTitle_(s.get("stop_key", "l").upper())
-        if self._binding_ui != "play":
-            self.play_key_btn.setTitle_(s.get("play_key", "o").upper())
-        if self._binding_ui != "stopplay":
-            self.stopplay_key_btn.setTitle_(s.get("stop_play_key", "k").upper())
+        for tag, (badge, skey, default) in self.key_badges.items():
+            if self._binding_ui != tag:
+                badge.setStringValue_(s.get(skey, default).upper())
+        # Rebinding captures a keypress, which needs Input Monitoring.
+        for btn in self.change_btns:
+            btn.setEnabled_(has_input)
 
     # -------------------------------------------------- shutdown ------------
     def windowWillClose_(self, notification):
