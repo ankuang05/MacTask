@@ -84,11 +84,18 @@ class Recorder:
     def __init__(self):
         self.events = []
         self.start = None
+        self._offset = 0.0        # time base so appended takes continue the timeline
         self._last_move = 0.0
         self.active = False
 
-    def begin(self):
-        self.events = []
+    def begin(self, append=False):
+        # Appending continues the existing recording instead of overwriting it;
+        # the buffer is only wiped by clear().
+        if append and self.events:
+            self._offset = self.events[-1]["t"] + 0.5   # small gap between takes
+        else:
+            self.events = []
+            self._offset = 0.0
         self.start = time.perf_counter()
         self._last_move = 0.0
         self.active = True
@@ -96,8 +103,12 @@ class Recorder:
     def stop(self):
         self.active = False
 
+    def clear(self):
+        self.events = []
+        self._offset = 0.0
+
     def _add(self, e):
-        e["t"] = round(time.perf_counter() - self.start, 4)
+        e["t"] = round(self._offset + (time.perf_counter() - self.start), 4)
         self.events.append(e)
 
     def on_move(self, x, y):
@@ -266,7 +277,7 @@ class Worker:
             self.recorder.on_key(key, "press")
         else:
             if label == self.record_key:
-                self.recorder.begin()
+                self.recorder.begin(append=True)
             elif label == self.play_key:
                 self._start_play(self._play_speed, self._play_loop)
 
@@ -281,17 +292,19 @@ class Worker:
         cmd = msg.get("cmd")
         if cmd == "toggle_record":
             if not self.playing:
-                (self.recorder.stop if self.recorder.active
-                 else self.recorder.begin)()
+                if self.recorder.active:
+                    self.recorder.stop()
+                else:
+                    self.recorder.begin(append=True)
         elif cmd == "record":
             if not self.playing and not self.recorder.active:
-                self.recorder.begin()
+                self.recorder.begin(append=True)
         elif cmd == "stop":
             if self.recorder.active:
                 self.recorder.stop()
         elif cmd == "clear":
             if not self.recorder.active and not self.playing:
-                self.recorder.events = []
+                self.recorder.clear()
         elif cmd == "config":
             self._play_speed = float(msg.get("speed", self._play_speed))
             self._play_loop = bool(msg.get("loop", self._play_loop))
