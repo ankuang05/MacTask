@@ -36,6 +36,29 @@ except Exception:
     def AXIsProcessTrusted():
         return True
 
+# Input Monitoring (a.k.a. "listen event access") is REQUIRED to capture
+# keyboard events on macOS; mouse events work with Accessibility alone. This is
+# a separate permission, so keyboard recording silently fails without it.
+try:
+    from Quartz import (CGPreflightListenEventAccess,
+                        CGRequestListenEventAccess)
+    HAVE_LISTEN_API = True
+except Exception:
+    HAVE_LISTEN_API = False
+
+    def CGPreflightListenEventAccess():
+        return True
+
+    def CGRequestListenEventAccess():
+        return True
+
+
+def input_monitoring_ok():
+    try:
+        return bool(CGPreflightListenEventAccess())
+    except Exception:
+        return True
+
 MOVE_INTERVAL = 0.008   # ~125 Hz mouse-move capture (finer than the eye needs)
 PLAYBACK_FPS = 120      # cursor is interpolated at this rate for smooth motion
 
@@ -188,27 +211,34 @@ class Worker:
         self.recorder = Recorder()
         self.record_key = "p"
         self.stop_key = "l"
+        self.play_key = "o"
         self.stop_play_key = "k"
         self._binding = None
         self.playing = False
         self._stop_play = threading.Event()
         self._quit = False
-        self._listeners_started = False
+        self._mouse_started = False
+        self._kb_started = False
         self._play_speed = 1.0
         self._play_loop = False
         self._lock = threading.Lock()
 
     # -------- input listeners (pynput) --------
-    def start_listeners(self):
+    def start_mouse(self):
         self.mouse_listener = mouse.Listener(
             on_move=self.recorder.on_move,
             on_click=self.recorder.on_click,
             on_scroll=self.recorder.on_scroll)
+        self.mouse_listener.start()
+        self._mouse_started = True
+
+    def start_keyboard(self):
+        # Only start once Input Monitoring is granted, otherwise the tap is
+        # created but receives no key events (the silent-keyboard bug).
         self.kb_listener = keyboard.Listener(
             on_press=self._on_press, on_release=self._on_release)
-        self.mouse_listener.start()
         self.kb_listener.start()
-        self._listeners_started = True
+        self._kb_started = True
 
     def _on_press(self, key):
         if self._binding is not None:
@@ -217,6 +247,8 @@ class Worker:
                 self.record_key = label
             elif self._binding == "stop":
                 self.stop_key = label
+            elif self._binding == "play":
+                self.play_key = label
             elif self._binding == "stopplay":
                 self.stop_play_key = label
             self._binding = None
@@ -235,6 +267,8 @@ class Worker:
         else:
             if label == self.record_key:
                 self.recorder.begin()
+            elif label == self.play_key:
+                self._start_play(self._play_speed, self._play_loop)
 
     def _on_release(self, key):
         if self.playing or self._binding is not None:
@@ -258,8 +292,13 @@ class Worker:
         elif cmd == "clear":
             if not self.recorder.active and not self.playing:
                 self.recorder.events = []
+        elif cmd == "config":
+            self._play_speed = float(msg.get("speed", self._play_speed))
+            self._play_loop = bool(msg.get("loop", self._play_loop))
         elif cmd == "play":
-            self._start_play(msg.get("speed", 1.0), bool(msg.get("loop")))
+            self._play_speed = float(msg.get("speed", self._play_speed))
+            self._play_loop = bool(msg.get("loop", self._play_loop))
+            self._start_play(self._play_speed, self._play_loop)
         elif cmd == "stop_play":
             self._stop_play.set()
         elif cmd == "bind":
@@ -292,11 +331,13 @@ class Worker:
         return {
             "type": "state",
             "trusted": bool(AXIsProcessTrusted()),
+            "input": input_monitoring_ok(),
             "recording": self.recorder.active,
             "playing": self.playing,
             "count": len(self.recorder.events),
             "record_key": self.record_key,
             "stop_key": self.stop_key,
+            "play_key": self.play_key,
             "stop_play_key": self.stop_play_key,
             "binding": self._binding,
         }
@@ -317,11 +358,25 @@ def main():
     worker = Worker()
     threading.Thread(target=stdin_reader, args=(worker,), daemon=True).start()
 
+    # Trigger the Input Monitoring prompt up front so the app appears in the
+    # System Settings list (needed for keyboard capture).
+    try:
+        CGRequestListenEventAccess()
+    except Exception:
+        pass
+
     out = sys.stdout
     while not worker._quit:
-        if AXIsProcessTrusted() and not worker._listeners_started:
+        # Mouse capture needs Accessibility; keyboard capture needs Input
+        # Monitoring. Start each listener only once its permission is granted.
+        if AXIsProcessTrusted() and not worker._mouse_started:
             try:
-                worker.start_listeners()
+                worker.start_mouse()
+            except Exception:
+                pass
+        if input_monitoring_ok() and not worker._kb_started:
+            try:
+                worker.start_keyboard()
             except Exception:
                 pass
         try:

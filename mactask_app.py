@@ -49,6 +49,8 @@ NSControlStateValueOn = 1
 
 ACCESSIBILITY_URL = ("x-apple.systempreferences:com.apple.preference."
                      "security?Privacy_Accessibility")
+INPUT_MONITORING_URL = ("x-apple.systempreferences:com.apple.preference."
+                        "security?Privacy_ListenEvent")
 WORKER = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                       "mactask_worker.py")
 
@@ -111,9 +113,9 @@ class Controller(NSObject):
         if self is None:
             return None
         self.state = {
-            "trusted": False, "recording": False, "playing": False,
-            "count": 0, "record_key": "p", "stop_key": "l",
-            "stop_play_key": "k", "binding": None,
+            "trusted": False, "input": False, "recording": False,
+            "playing": False, "count": 0, "record_key": "p", "stop_key": "l",
+            "play_key": "o", "stop_play_key": "k", "binding": None,
         }
         self._binding_ui = None
         self._build_window()
@@ -188,23 +190,29 @@ class Controller(NSObject):
         self.loop_btn.setButtonType_(3)  # checkbox
         self.loop_btn.setTitle_(" Loop until stopped")
         self.loop_btn.setFont_(NSFont.systemFontOfSize_(13))
+        self.loop_btn.setTarget_(self)
+        self.loop_btn.setAction_(b"loopChanged:")
         cv.addSubview_(self.loop_btn)
 
         # --- Hotkeys ---
         cv.addSubview_(_label("HOTKEYS", 24, H - 380, W - 48, 14,
                               size=11, weight="semibold", color=faint))
+        # Row 1: Record | Stop rec
         cv.addSubview_(_label("Record", 24, H - 406, 60, 22, color=subtle))
-        self.rec_key_btn = _button("P", 92, H - 408, 90, 26,
+        self.rec_key_btn = _button("P", 96, H - 408, 74, 26,
                                    self, b"bindRecord:")
         cv.addSubview_(self.rec_key_btn)
-        cv.addSubview_(_label("Stop", 196, H - 406, 46, 22, color=subtle))
-        self.stop_key_btn = _button("L", 246, H - 408, 90, 26,
+        cv.addSubview_(_label("Stop rec", 190, H - 406, 66, 22, color=subtle))
+        self.stop_key_btn = _button("L", 262, H - 408, 74, 26,
                                     self, b"bindStop:")
         cv.addSubview_(self.stop_key_btn)
-
-        cv.addSubview_(_label("Stop playback", 24, H - 440, 110, 22,
-                              color=subtle))
-        self.stopplay_key_btn = _button("K", 140, H - 442, 90, 26,
+        # Row 2: Play | Stop play
+        cv.addSubview_(_label("Play", 24, H - 438, 60, 22, color=subtle))
+        self.play_key_btn = _button("O", 96, H - 440, 74, 26,
+                                    self, b"bindPlay:")
+        cv.addSubview_(self.play_key_btn)
+        cv.addSubview_(_label("Stop play", 190, H - 438, 70, 22, color=subtle))
+        self.stopplay_key_btn = _button("K", 262, H - 440, 74, 26,
                                         self, b"bindStopPlay:")
         cv.addSubview_(self.stopplay_key_btn)
 
@@ -256,6 +264,16 @@ class Controller(NSObject):
 
     def speedChanged_(self, sender):
         self.speed_lbl.setStringValue_(f"{self.speed.floatValue():.2f}×")
+        self._sync_config()
+
+    def loopChanged_(self, sender):
+        self._sync_config()
+
+    def _sync_config(self):
+        # Keep the worker's playback settings in sync so the Play hotkey uses
+        # the current slider/loop values.
+        self._send(cmd="config", speed=self.speed.floatValue(),
+                   loop=self.loop_btn.state() == NSControlStateValueOn)
 
     def bindRecord_(self, sender):
         self._binding_ui = "record"
@@ -267,20 +285,30 @@ class Controller(NSObject):
         self.stop_key_btn.setTitle_("press…")
         self._send(cmd="bind", which="stop")
 
+    def bindPlay_(self, sender):
+        self._binding_ui = "play"
+        self.play_key_btn.setTitle_("press…")
+        self._send(cmd="bind", which="play")
+
     def bindStopPlay_(self, sender):
         self._binding_ui = "stopplay"
         self.stopplay_key_btn.setTitle_("press…")
         self._send(cmd="bind", which="stopplay")
 
     def grantClicked_(self, sender):
-        if HAVE_AX_PROMPT:
+        need_ax = not self.state.get("trusted", False)
+        need_input = not self.state.get("input", False)
+        if need_ax and HAVE_AX_PROMPT:
             try:
                 AXIsProcessTrustedWithOptions({kAXTrustedCheckOptionPrompt: True})
             except Exception:
                 pass
+        # Open whichever pane is still missing (Accessibility first).
+        url = ACCESSIBILITY_URL if need_ax else INPUT_MONITORING_URL
+        if not need_ax and not need_input:
+            url = ACCESSIBILITY_URL
         try:
-            NSWorkspace.sharedWorkspace().openURL_(
-                NSURL.URLWithString_(ACCESSIBILITY_URL))
+            NSWorkspace.sharedWorkspace().openURL_(NSURL.URLWithString_(url))
         except Exception:
             pass
 
@@ -288,16 +316,23 @@ class Controller(NSObject):
     def refresh_(self, timer):
         s = self.state
         trusted = s.get("trusted", False)
+        has_input = s.get("input", False)
         recording = s.get("recording", False)
         playing = s.get("playing", False)
+        ready = trusted and has_input
 
-        if trusted:
+        if ready:
             self.perm_lbl.setStringValue_("")
             self.grant_btn.setHidden_(True)
         else:
+            if not trusted and not has_input:
+                msg = "Enable Accessibility + Input Monitoring"
+            elif not trusted:
+                msg = "Enable Accessibility (for mouse & playback)"
+            else:
+                msg = "Enable Input Monitoring (for keyboard)"
             self.perm_lbl.setTextColor_(NSColor.systemRedColor())
-            self.perm_lbl.setStringValue_(
-                "Needs Accessibility permission to run")
+            self.perm_lbl.setStringValue_(msg)
             self.grant_btn.setHidden_(False)
 
         if recording:
@@ -323,10 +358,11 @@ class Controller(NSObject):
 
         self.count_lbl.setStringValue_(f"{s.get('count', 0)} events")
 
-        # Play/Stop is usable during playback so you can stop a loop.
+        # Recording needs both permissions; playback needs Accessibility.
+        # Play/Stop stays usable during playback so you can stop a loop.
         self.play_btn.setEnabled_(trusted and not recording)
-        self.record_btn.setEnabled_(trusted and not playing)
-        self.clear_btn.setEnabled_(trusted and not (playing or recording))
+        self.record_btn.setEnabled_(ready and not playing)
+        self.clear_btn.setEnabled_(ready and not (playing or recording))
 
         if s.get("binding") is None:
             self._binding_ui = None
@@ -334,6 +370,8 @@ class Controller(NSObject):
             self.rec_key_btn.setTitle_(s.get("record_key", "p").upper())
         if self._binding_ui != "stop":
             self.stop_key_btn.setTitle_(s.get("stop_key", "l").upper())
+        if self._binding_ui != "play":
+            self.play_key_btn.setTitle_(s.get("play_key", "o").upper())
         if self._binding_ui != "stopplay":
             self.stopplay_key_btn.setTitle_(s.get("stop_play_key", "k").upper())
 
