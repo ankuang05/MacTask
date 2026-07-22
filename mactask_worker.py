@@ -64,13 +64,15 @@ PLAYBACK_FPS = 120      # cursor is interpolated at this rate for smooth motion
 
 
 def key_repr(key):
-    char = getattr(key, "char", None)
-    if char is not None:
-        return {"key": char, "special": False}
-    name = getattr(key, "name", None)
+    # Store the character when available, but ALWAYS keep the virtual keycode
+    # (vk) too. On some layouts/input sources macOS returns no char for number
+    # (and other) keys; the vk lets us still replay them by physical key.
+    name = getattr(key, "name", None)      # only special Keys have .name
+    vk = getattr(key, "vk", None)
     if name is not None:
-        return {"key": name, "special": True}
-    return {"key": str(key), "special": True}
+        return {"key": name, "special": True, "vk": vk}
+    char = getattr(key, "char", None)
+    return {"key": char, "special": False, "vk": vk}
 
 
 def key_label(key):
@@ -164,9 +166,19 @@ class Player:
         self.total = events[-1]["t"] if events else 0.0
 
     def _resolve_key(self, e):
-        if e["special"]:
+        if e.get("special"):
             return getattr(keyboard.Key, e["key"], None)
-        return e["key"]
+        # Prefer the character; fall back to the physical key (vk) when macOS
+        # gave us no char for this key (e.g. number keys on some layouts).
+        if e.get("key") is not None:
+            return e["key"]
+        vk = e.get("vk")
+        if vk is not None:
+            try:
+                return keyboard.KeyCode.from_vk(vk)
+            except Exception:
+                return None
+        return None
 
     def _pos_at(self, t):
         mt = self.move_t
