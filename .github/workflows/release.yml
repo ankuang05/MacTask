@@ -24,7 +24,9 @@ jobs:
           - os: macos-14
             label: macOS (Apple Silicon)
             asset: MacTask-macOS-AppleSilicon
-          - os: macos-13
+          # macos-13 was the old Intel runner and has been retired - a job
+          # targeting it queues forever instead of failing.
+          - os: macos-15-intel
             label: macOS (Intel)
             asset: MacTask-macOS-Intel
 
@@ -78,7 +80,8 @@ jobs:
   release:
     name: Publish release
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    # always(): one platform failing shouldn't hold the other downloads hostage.
+    if: always() && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
