@@ -1,0 +1,104 @@
+name: Build & release
+
+# Push a tag to publish downloads:  git tag v1.1.0 && git push origin v1.1.0
+# Or run this workflow by hand to get the binaries as build artifacts only.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: Windows (x64)
+            asset: MacTask-Windows-x64
+          - os: macos-14
+            label: macOS (Apple Silicon)
+            asset: MacTask-macOS-AppleSilicon
+          - os: macos-13
+            label: macOS (Intel)
+            asset: MacTask-macOS-Intel
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip pyinstaller pynput
+
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        run: python -m pip install pyobjc-framework-Quartz
+
+      # One .exe with Python inside; nothing for the user to install.
+      - name: Build Windows binary
+        if: runner.os == 'Windows'
+        run: >
+          python -m PyInstaller --noconfirm --clean --onefile --windowed
+          --name MacTask
+          --exclude-module mactask_app --exclude-module objc
+          --exclude-module AppKit --exclude-module Foundation
+          --exclude-module Quartz --exclude-module ApplicationServices
+          --exclude-module PyObjCTools
+          mactask_main.py
+
+      - name: Build macOS app bundle
+        if: runner.os == 'macOS'
+        run: >
+          python -m PyInstaller --noconfirm --clean --windowed
+          --name MacTask --osx-bundle-identifier com.mactask.app
+          mactask_main.py
+
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        run: Compress-Archive -Path dist/MacTask.exe -DestinationPath ${{ matrix.asset }}.zip
+
+      # ditto (not zip) keeps the bundle's symlinks and permissions intact.
+      - name: Package macOS
+        if: runner.os == 'macOS'
+        run: ditto -c -k --sequesterRsrc --keepParent dist/MacTask.app ${{ matrix.asset }}.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}.zip
+
+  release:
+    name: Publish release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*.zip
+          generate_release_notes: true
+          body: |
+            Download the build for your machine, then see the README for the
+            one-time setup step on each platform.
+
+            | Platform | File |
+            |---|---|
+            | Windows 10/11 (64-bit) | `MacTask-Windows-x64.zip` |
+            | macOS (Apple Silicon) | `MacTask-macOS-AppleSilicon.zip` |
+            | macOS (Intel) | `MacTask-macOS-Intel.zip` |
+
+            The builds are unsigned, so Windows SmartScreen and macOS Gatekeeper
+            will warn on first launch - the README explains how to get past both.

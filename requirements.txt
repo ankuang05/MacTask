@@ -1,1 +1,4 @@
 pynput>=1.7.6
+# macOS only - the Cocoa window plus the Accessibility / Input Monitoring
+# checks. Pulls in pyobjc-framework-Cocoa (AppKit, Foundation) as well.
+pyobjc-framework-Quartz>=9.0; sys_platform == "darwin"

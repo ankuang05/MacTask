@@ -6,6 +6,9 @@
 # the system python3 (PyObjC ships with macOS; pynput is auto-installed to the
 # user site on first launch if missing). No compiler or py2app required.
 #
+# For a self-contained bundle that carries its own Python - which is what the
+# downloadable release is built from - use build_macos.sh instead.
+#
 # Usage:   ./build_app.sh          -> creates dist/MacTask.app
 #
 set -euo pipefail
@@ -19,8 +22,10 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 # --- Python sources ---
-cp "$HERE/mactask_app.py"    "$APP/Contents/Resources/"
-cp "$HERE/mactask_worker.py" "$APP/Contents/Resources/"
+for src in mactask_main.py mactask_app.py mactask_gui.py mactask_worker.py \
+           worker_link.py; do
+  cp "$HERE/$src" "$APP/Contents/Resources/"
+done
 
 # --- Info.plist ---
 cat > "$APP/Contents/Info.plist" <<PLIST
@@ -50,7 +55,7 @@ DIR="$(cd "$(dirname "$0")/../Resources" && pwd)"
 PY="$(command -v python3 || echo /usr/bin/python3)"
 # Ensure the one runtime dependency is present (PyObjC already ships with macOS).
 "$PY" -c "import pynput" 2>/dev/null || "$PY" -m pip install --user pynput >/dev/null 2>&1 || true
-exec "$PY" "$DIR/mactask_app.py"
+exec "$PY" "$DIR/mactask_main.py"
 SH
 chmod +x "$APP/Contents/MacOS/MacTask"
 

@@ -8,17 +8,16 @@ toggle, and rebindable hotkeys (default: P = record, L = stop).
 The input engine (pynput) runs in a SEPARATE process (mactask_worker.py). Mixing
 pynput with an AppKit run loop crashes on macOS 15 (Text Input Source APIs must
 run on the main thread); splitting them into two processes avoids that entirely.
+Windows gets a Tk window (mactask_gui.py) driving that same worker.
 
 Everything is in-memory only: nothing is written to disk.
 
 Run:  python3 mactask_app.py
 """
 
-import os
 import sys
-import json
-import threading
-import subprocess
+
+from worker_link import WorkerLink
 
 try:
     import objc
@@ -51,8 +50,6 @@ ACCESSIBILITY_URL = ("x-apple.systempreferences:com.apple.preference."
                      "security?Privacy_Accessibility")
 INPUT_MONITORING_URL = ("x-apple.systempreferences:com.apple.preference."
                         "security?Privacy_ListenEvent")
-WORKER = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                      "mactask_worker.py")
 
 
 # ---------------------------------------------------------------------------
@@ -124,14 +121,11 @@ class Controller(NSObject):
         self = objc.super(Controller, self).init()
         if self is None:
             return None
-        self.state = {
-            "trusted": False, "input": False, "recording": False,
-            "playing": False, "count": 0, "record_key": "p", "stop_key": "l",
-            "play_key": "o", "stop_play_key": "k", "binding": None,
-        }
-        self._binding_ui = None
+        self.link = WorkerLink()
+        self._binding_ui = None     # tag awaiting a keypress, or None
+        self._bind_acked = False    # worker has echoed that request back
         self._build_window()
-        self._start_worker()
+        self.link.start()
         self.timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
             0.08, self, b"refresh:", None, True)
         return self
@@ -237,38 +231,15 @@ class Controller(NSObject):
         win.makeKeyAndOrderFront_(None)
 
     # -------------------------------------------------- worker IPC ----------
-    def _start_worker(self):
-        self.proc = subprocess.Popen(
-            [sys.executable, WORKER],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            bufsize=1, universal_newlines=True)
-        threading.Thread(target=self._reader, daemon=True).start()
-
-    def _reader(self):
-        for line in self.proc.stdout:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                msg = json.loads(line)
-                if msg.get("type") == "state":
-                    self.state = msg
-            except Exception:
-                pass
-
     def _send(self, **msg):
-        try:
-            self.proc.stdin.write(json.dumps(msg) + "\n")
-            self.proc.stdin.flush()
-        except Exception:
-            pass
+        self.link.send(**msg)
 
     # -------------------------------------------------- actions -------------
     def recordClicked_(self, sender):
         self._send(cmd="toggle_record")
 
     def playClicked_(self, sender):
-        if self.state.get("playing"):
+        if self.link.state.get("playing"):
             self._send(cmd="stop_play")
         else:
             self._send(cmd="play", speed=self.speed.floatValue(),
@@ -309,8 +280,8 @@ class Controller(NSObject):
         self._begin_bind("stopplay")
 
     def grantClicked_(self, sender):
-        need_ax = not self.state.get("trusted", False)
-        need_input = not self.state.get("input", False)
+        need_ax = not self.link.state.get("trusted", False)
+        need_input = not self.link.state.get("input", False)
         if need_ax and HAVE_AX_PROMPT:
             try:
                 AXIsProcessTrustedWithOptions({kAXTrustedCheckOptionPrompt: True})
@@ -327,7 +298,7 @@ class Controller(NSObject):
 
     # -------------------------------------------------- refresh -------------
     def refresh_(self, timer):
-        s = self.state
+        s = self.link.state
         trusted = s.get("trusted", False)
         has_input = s.get("input", False)
         recording = s.get("recording", False)
@@ -377,28 +348,30 @@ class Controller(NSObject):
         self.record_btn.setEnabled_(ready and not playing)
         self.clear_btn.setEnabled_(ready and not (playing or recording))
 
-        if s.get("binding") is None:
+        # The worker echoes a pending rebind back as `binding`. Until that echo
+        # arrives the local request has to be trusted, or the very next refresh
+        # would wipe the "press…" prompt and leave no sign we're waiting.
+        reported = s.get("binding")
+        if reported == self._binding_ui:
+            self._bind_acked = True
+        if self._bind_acked and reported is None:
             self._binding_ui = None
+            self._bind_acked = False
+        pending = self._binding_ui or reported
         for tag, (badge, skey, default) in self.key_badges.items():
-            if self._binding_ui != tag:
-                badge.setStringValue_(s.get(skey, default).upper())
+            badge.setStringValue_("press…" if tag == pending
+                                  else s.get(skey, default).upper())
         # Rebinding captures a keypress, which needs Input Monitoring.
         for btn in self.change_btns:
             btn.setEnabled_(has_input)
 
     # -------------------------------------------------- shutdown ------------
     def windowWillClose_(self, notification):
-        try:
-            self._send(cmd="quit")
-            self.proc.terminate()
-        except Exception:
-            pass
+        self.link.close()
         NSApp.terminate_(self)
 
 
 def main():
-    if not os.path.exists(WORKER):
-        sys.exit(f"Worker not found: {WORKER}")
     app = NSApplication.sharedApplication()
     app.setActivationPolicy_(NSApplicationActivationPolicyRegular)
     Controller.alloc().init()

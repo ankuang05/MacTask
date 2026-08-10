@@ -6,6 +6,11 @@ Runs the pynput recording/playback engine in its OWN process (no AppKit), so it
 never hits the macOS "Text Input Source on a background thread" crash that
 happens when pynput shares a process with a Cocoa run loop.
 
+Cross-platform: pynput drives input on macOS and Windows alike. The only
+platform-specific part is permissions — macOS gates input capture behind
+Accessibility + Input Monitoring, Windows gates nothing — so on Windows the
+permission checks below simply report "granted".
+
 Protocol (newline-delimited JSON over stdin/stdout):
   GUI -> worker (stdin):
     {"cmd": "toggle_record"}
@@ -30,11 +35,13 @@ import threading
 
 from pynput import mouse, keyboard
 
+IS_MAC = sys.platform == "darwin"
+
 try:
     from ApplicationServices import AXIsProcessTrusted
 except Exception:
     def AXIsProcessTrusted():
-        return True
+        return True     # not a macOS concept — nothing to grant
 
 # Input Monitoring (a.k.a. "listen event access") is REQUIRED to capture
 # keyboard events on macOS; mouse events work with Accessibility alone. This is
@@ -355,6 +362,7 @@ class Worker:
     def state(self):
         return {
             "type": "state",
+            "platform": sys.platform,
             "trusted": bool(AXIsProcessTrusted()),
             "input": input_monitoring_ok(),
             "recording": self.recorder.active,
@@ -380,15 +388,23 @@ def stdin_reader(worker):
 
 
 def main():
+    # Frozen Windows builds get a block-buffered stdout by default, which would
+    # stall state updates in the pipe until the buffer fills.
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except Exception:
+        pass
+
     worker = Worker()
     threading.Thread(target=stdin_reader, args=(worker,), daemon=True).start()
 
     # Trigger the Input Monitoring prompt up front so the app appears in the
-    # System Settings list (needed for keyboard capture).
-    try:
-        CGRequestListenEventAccess()
-    except Exception:
-        pass
+    # System Settings list (needed for keyboard capture). macOS only.
+    if IS_MAC:
+        try:
+            CGRequestListenEventAccess()
+        except Exception:
+            pass
 
     out = sys.stdout
     while not worker._quit:
